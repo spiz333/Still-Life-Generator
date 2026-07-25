@@ -29,7 +29,7 @@ pip install torch diffusers transformers pillow huggingface_hub
 
 Then launch:
 
-- **Windows:** double-click `Still Life Generator.bat`
+- **Windows:** double-click `run.bat`
 - **macOS / Linux:** `./run.sh` (or `python3 still_life_gui.py`)
 
 On first launch, click **Download Model** to fetch SD-Turbo (~1.5GB). After that, the model is cached and the app opens instantly.
