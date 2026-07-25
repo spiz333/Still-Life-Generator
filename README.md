@@ -1,6 +1,6 @@
 # Still Life Generator
 
-A desktop GUI app that enhances images using AI image-to-image generation with [SD-Turbo](https://huggingface.co/stabilityai/sd-turbo). Runs entirely locally — no API keys, no cloud.
+A desktop GUI app that distorts images using AI image-to-image generation with [SD-Turbo](https://huggingface.co/stabilityai/sd-turbo). Runs entirely locally — no API keys, no cloud.
 
 ## Features
 
