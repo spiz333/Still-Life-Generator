@@ -20,7 +20,7 @@ A desktop GUI app that distorts images using AI image-to-image generation with [
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/still-life-generator.git
+git clone https://github.com/spiz333/still-life-generator.git
 cd still-life-generator
 
 # Install dependencies
