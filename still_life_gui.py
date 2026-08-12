@@ -9,16 +9,20 @@ os.environ.setdefault("HF_HOME", os.path.join(os.path.dirname(os.path.abspath(__
 
 MODEL_ID = "stabilityai/sd-turbo"
 
-# Scene-agnostic erasure gradient: works on rooms, pools, people, anything.
-# Low depth anchors the scene (removes lighting), high depth lets it empty.
-ERASURE_PROMPTS = [
-    "the same scene, the same subject, photorealistic, remove reflections, remove caustics, remove glare and lens effects, flat even lighting",
-    "the same scene, the same subject, photorealistic, remove small details, remove small objects and clutter, smooth clean surfaces",
-    "the same scene, remove objects, empty surfaces, no objects, no furniture, minimal, plain",
-    "empty plain space, blank, featureless, smooth, nothing inside, no objects, no details",
-    "nothing, empty, blank, featureless, plain, smooth, flat",
+# Scene-agnostic dismorph gradient: each pass tries to *recreate* the same
+# scene but gets it wrong, so the AI adds or strips content as intensity rises.
+# Low = faithful but subtly wrong; mid = extra eyes/mouths, duplicated features
+# and garbled text (letters get missing/swapped); high = everything stripped
+# down to a bare empty room/cube. Text and objects look scrambled throughout.
+DISMOORPH_PROMPTS = [
+    "the same image, the same scene, the same subject, photorealistic, recreate it faithfully, subtle imperfections, readable text",
+    "the same image, the same scene, photorealistic, slightly warped, imperfect edges, faint duplicated details, slightly misspelled text",
+    "the same image, the same scene, recreated imperfectly, extra eyes and mouths, duplicated features, garbled text, missing letters, misspelled words",
+    "the same scene, recreated badly, many extra eyes and mouths, multiplied objects, scrambled letters, jumbled words, gibberish text, melting, uncanny",
+    "the same scene emptied, background stripped bare, distorted figure, empty walls, scrambled lettering, broken mangled objects, minimal, plain",
+    "an empty room, bare walls, an empty cube, featureless, blank, nothing inside",
 ]
-FLATTEN_PROMPT = "nothing, empty, blank, featureless, plain, smooth, flat"
+FLATTEN_PROMPT = "an empty room, an empty cube, bare walls, nothing inside, blank, featureless, minimal"
 
 if sys.platform == "win32":
     FONT = "Segoe UI"
@@ -161,12 +165,17 @@ class EnhanceApp:
         sframe.pack(fill="x", pady=(5, 0))
         tk.Label(sframe, text="Remove:", font=(FONT, 10), bg="#1a1a2e", fg="#ccc").pack(side="left")
         self.strength_var = tk.DoubleVar(value=0.5)
-        self.strength_slider = tk.Scale(sframe, from_=0.1, to=1.0, resolution=0.05, orient="horizontal",
+        self.strength_slider = tk.Scale(sframe, from_=0.1, to=1.0, resolution=0.01, orient="horizontal",
                                         variable=self.strength_var, bg="#1a1a2e", fg="#ccc",
                                         highlightthickness=0, troughcolor="#16213e",
                                         activebackground="#e94560", length=280, font=(FONT, 8))
         self.strength_slider.pack(side="left", padx=10)
-        tk.Label(sframe, text="subtle = less | high = empty room", font=(FONT, 8), bg="#1a1a2e", fg="#666").pack(side="left")
+        self.strength_value = tk.Label(sframe, text="0.50", font=(FONT, 10, "bold"),
+                                       bg="#1a1a2e", fg="#e94560", width=5)
+        self.strength_value.pack(side="left", padx=(0, 10))
+        self.strength_slider.configure(command=self._on_strength_change)
+        tk.Label(sframe, text="low = subtle glitch | high = empty room", font=(FONT, 8),
+                 bg="#1a1a2e", fg="#666").pack(side="left")
 
         oframe = tk.Frame(ctrl_frame, bg="#1a1a2e")
         oframe.pack(fill="x", pady=(5, 0))
@@ -193,6 +202,14 @@ class EnhanceApp:
         self.gen_canvas = tk.Canvas(img_frame, bg="#16213e", highlightthickness=0, width=370, height=370)
         self.gen_canvas.pack(side="right", padx=5, fill="both", expand=True)
         self.gen_canvas.create_text(185, 185, text="Generated", fill="#555", font=(FONT, 11), tags="p")
+
+    def _on_strength_change(self, val):
+        try:
+            v = float(val)
+        except Exception:
+            v = self.strength_var.get()
+        self.strength_var.set(v)
+        self.strength_value.configure(text=f"{v:.2f}")
 
     def _on_device_change(self, event=None):
         self.device = self.device_combo.get().lower()
@@ -329,13 +346,17 @@ class EnhanceApp:
         canvas.create_image(cw // 2, ch // 2, image=photo)
         canvas.create_text(cw // 2, 20, text=label, fill="#e94560", font=(FONT, 10, "bold"))
 
-    def _erasure_plan(self, intensity):
-        passes = max(1, int(round(intensity * 8)))
-        strength = 0.12 + (intensity ** 1.3) * 0.55
-        if intensity >= 0.5:
-            flatten = min(0.8, 0.5 + intensity * 0.4)
-        elif intensity >= 0.35:
-            flatten = 0.25 + intensity * 0.35
+    def _dismorph_plan(self, intensity):
+        # Remap so the slider's full 1.0 equals the old 0.7 max effect.
+        # This keeps the output recognizable and gives finer control
+        # across the whole range instead of blowing up past 0.7.
+        eff = intensity * 0.7
+        passes = max(1, int(round(eff * 8)))
+        strength = 0.35 + (eff ** 1.2) * 0.45
+        if eff >= 0.5:
+            flatten = min(0.8, 0.5 + eff * 0.3)
+        elif eff >= 0.35:
+            flatten = 0.3 + eff * 0.35
         else:
             flatten = None
         return passes, strength, flatten
@@ -345,7 +366,7 @@ class EnhanceApp:
         self.gen_btn.configure(state="disabled", text="Generating...")
         self.progress_bar["mode"] = "determinate"
         self.progress_bar.configure(value=0)
-        self.set_status("Erasing...", "Still life concept (iterative passes)")
+        self.set_status("Dismorphing...", "recreating the scene, badly (iterative passes)")
         self._animating = True
         self._animate_status()
         threading.Thread(target=self._generate_thread, daemon=True).start()
@@ -369,7 +390,7 @@ class EnhanceApp:
                 if self.device == "cuda": self.pipe.enable_attention_slicing()
 
             intensity = self.strength_var.get()
-            passes, strength, flatten_strength = self._erasure_plan(intensity)
+            passes, strength, flatten_strength = self._dismorph_plan(intensity)
             total = passes + (1 if flatten_strength is not None else 0)
 
             init = self.input_image.copy()
@@ -385,18 +406,18 @@ class EnhanceApp:
 
             for i in range(passes):
                 depth = i / passes
-                idx = min(len(ERASURE_PROMPTS) - 1, int(depth * len(ERASURE_PROMPTS)))
+                idx = min(len(DISMOORPH_PROMPTS) - 1, int(depth * len(DISMOORPH_PROMPTS)))
                 self.root.after(0, lambda i=i, idx=idx, total=total: (
                     self.progress_bar.configure(value=int(i / total * 100)),
-                    self.set_status(f"Still life pass {i + 1}/{total}", ERASURE_PROMPTS[idx][:55])
+                    self.set_status(f"Dismorph pass {i + 1}/{total}", DISMOORPH_PROMPTS[idx][:55])
                 ))
-                current = self.pipe(ERASURE_PROMPTS[idx], image=current, strength=strength,
+                current = self.pipe(DISMOORPH_PROMPTS[idx], image=current, strength=strength,
                                     num_inference_steps=8, guidance_scale=0.0).images[0]
 
             if flatten_strength is not None:
                 self.root.after(0, lambda total=total: (
                     self.progress_bar.configure(value=int(passes / total * 100)),
-                    self.set_status(f"Flattening (pass {total}/{total})", "settling into emptiness")
+                    self.set_status(f"Corrupting (pass {total}/{total})", "warping it further")
                 ))
                 current = self.pipe(FLATTEN_PROMPT, image=current, strength=flatten_strength,
                                     num_inference_steps=8, guidance_scale=0.0).images[0]
