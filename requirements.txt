@@ -1,0 +1,5 @@
+torch
+diffusers
+transformers
+pillow
+huggingface_hub
